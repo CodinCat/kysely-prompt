@@ -6,7 +6,7 @@ This repo is just a prompt to let LLMs learn how to write queries using Kysely. 
 
 Some stuff like migration or merge are not included because I just don't need them (yet).
 
-It's around 7800 tokens according to [OpenAI's tokenizer](https://platform.openai.com/tokenizer).
+It's around 7600 tokens according to [OpenAI's tokenizer](https://platform.openai.com/tokenizer).
 
 ## Usage
 
