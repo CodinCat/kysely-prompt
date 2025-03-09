@@ -1,0 +1,1229 @@
+<instruction>
+You are an expert in the query building library Kysely. Use these examples to help the user write type-safe, efficient PostgreSQL queries with Kysely.
+</instruction>
+
+<glossary>
+`eb`: expression builder
+`qb`: query builder
+</glossary>
+
+================================
+
+## Simple Where
+
+```typescript
+const person = await db
+  .selectFrom('person')
+  .selectAll()
+  .where('first_name', '=', 'Jennifer')
+  .where('age', '>', 40)
+  .executeTakeFirst()
+```
+
+================================
+
+## Where Callback
+
+```typescript
+const persons = await db
+  .selectFrom('person')
+  .selectAll()
+  .where((eb) => eb.and({
+    first_name: 'Jennifer',
+    last_name: eb.ref('first_name')
+  }))
+  .execute()
+```
+
+```sql
+select *
+from "person"
+where (
+  "first_name" = $1
+  and "last_name" = "first_name"
+)
+```
+
+================================
+
+## More Complex Where
+
+```typescript
+const persons = await db
+  .selectFrom('person')
+  .selectAll()
+  .where((eb) => eb.or([
+    eb('first_name', '=', 'Jennifer'),
+    eb('first_name', '=', 'Sylvester')
+  ]))
+  // alternative way
+  .where((eb) =>
+    eb('last_name', '=', 'Aniston').or('last_name', '=', 'Stallone')
+  )
+  .execute()
+```
+
+```sql
+select *
+from "person"
+where (
+  ("first_name" = $1 or "first_name" = $2)
+  and
+  ("last_name" = $3 or "last_name" = $4)
+)
+```
+
+================================
+
+## whereRef
+
+```typescript
+const persons = await db
+  .selectFrom('person')
+  .selectAll()
+  .where(
+    (qb) => qb.selectFrom('pet')
+      .select('pet.name')
+      .whereRef('pet.owner_id', '=', 'person.id')
+      .limit(1),
+    '=',
+    'Fluffy'
+  )
+  .execute()
+```
+
+```sql
+select *
+from "person"
+where (
+  select "pet"."name"
+  from "pet"
+  where "pet"."owner_id" = "person"."id"
+  limit $1
+) = $2
+```
+
+================================
+
+## Complex Where with Subquery
+
+```typescript
+const firstName = 'Jennifer'
+const maxAge = 60
+
+const persons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .where(({ eb, or, and, not, exists, selectFrom }) => and([
+    or([
+      eb('first_name', '=', firstName),
+      eb('age', '<', maxAge)
+    ]),
+    not(exists(
+      selectFrom('pet')
+        .select('pet.id')
+        .whereRef('pet.owner_id', '=', 'person.id')
+    ))
+  ]))
+  .execute()
+```
+
+```sql
+select "person".*
+from "person"
+where (
+  (
+    "first_name" = $1
+    or "age" < $2
+  )
+  and not exists (
+    select "pet"."id" from "pet" where "pet"."owner_id" = "person"."id"
+  )
+)
+```
+
+================================
+
+## filterWhereRef
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .select((eb) => [
+    eb.fn
+      .count<number>('id')
+      .filterWhereRef('first_name', '=', 'last_name')
+      .as('repeat_name_count'),
+    eb.fn.count<number>('id').as('total_count'),
+  ])
+  .executeTakeFirstOrThrow()
+```
+
+```sql
+select
+  count("id") filter(where "first_name" = "last_name") as "repeat_name_count",
+  count("id") as "total_count"
+from "person"
+```
+
+================================
+
+## Raw SQL in Where
+
+```typescript
+import { sql } from 'kysely'
+
+const persons = await db
+  .selectFrom('person')
+  .selectAll()
+  .where(
+    sql`coalesce(first_name, last_name)`,
+    'like',
+    '%' + name + '%',
+  )
+  .execute()
+```
+
+```sql
+select * from "person"
+where coalesce(first_name, last_name) like $1
+```
+
+================================
+
+## Where Callback and ref
+
+```typescript
+db.selectFrom('person')
+  .selectAll('person')
+  .where((eb) => eb.or([
+    eb('first_name', '=', eb.ref('last_name')),
+    eb('first_name', '=', eb.ref('middle_name'))
+  ]))
+```
+
+```sql
+SELECT "person".*
+FROM "person"
+WHERE (
+  "first_name" = "last_name"
+  OR "first_name" = "middle_name"
+)
+```
+
+================================
+
+## Union
+
+```typescript
+db.selectFrom('person')
+  .select(['id', 'first_name as name'])
+  .union(db.selectFrom('pet').select(['id', 'name']))
+  .orderBy('name')
+
+// to wrap the query in parentheses:
+db.selectFrom('person')
+  .select(['id', 'first_name as name'])
+  .union((eb) => eb.parens(
+    eb.selectFrom('pet').select(['id', 'name'])
+  ))
+  .orderBy('name')
+```
+
+================================
+
+## Built-in fn and groupBy
+
+```typescript
+await db.selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .select((eb) => [
+    'person.id',
+    eb.fn.count('pet.id').as('pet_count')
+  ])
+  .groupBy('person.id')
+  .having((eb) => eb.fn.count('pet.id'), '>', 10)
+  .execute()
+```
+
+```sql
+select "person"."id", count("pet"."id") as "pet_count"
+from "person"
+inner join "pet" on "pet"."owner_id" = "person"."id"
+group by "person"."id"
+having count("pet"."id") > $1
+```
+
+================================
+
+## Subquery and Raw SQL groupBy
+
+```typescript
+await db
+  .selectFrom('person')
+  .select([
+    'first_name',
+    'last_name',
+    sql`max(id)`.as('max_id')
+  ])
+  .groupBy([
+    sql`concat(first_name, last_name)`,
+    (qb) => qb.selectFrom('pet').select('id').limit(1)
+  ])
+  .execute()
+```
+
+```sql
+SELECT "first_name", "last_name", max(id) AS "max_id"
+FROM "person"
+GROUP BY concat(first_name, last_name),
+  (
+    SELECT "id" FROM "pet" LIMIT $1
+  )
+```
+
+================================
+
+## case when
+
+```typescript
+import { sql } from 'kysely'
+
+const { title, name } = await db
+  .selectFrom('person')
+  .where('id', '=', '123')
+  .select((eb) => [
+    eb.fn.coalesce('last_name', 'first_name').as('name'),
+    eb
+      .case()
+      .when('gender', '=', 'male')
+      .then('Mr.')
+      .when('gender', '=', 'female')
+      .then(
+        eb
+          .case('maritalStatus')
+          .when('single')
+          .then('Ms.')
+          .else('Mrs.')
+          .end()
+      )
+      .end()
+      .as('title'),
+  ])
+  .executeTakeFirstOrThrow()
+```
+
+```sql
+select
+  coalesce("last_name", "first_name") as "name",
+  case
+    when "gender" = $1 then $2
+    when "gender" = $3 then
+      case "maritalStatus"
+        when $4 then $5
+        else $6
+      end
+  end as "title"
+from "person"
+where "id" = $7
+```
+
+================================
+
+## cast as
+
+```typescript
+db.selectFrom('person')
+  .select((eb) => [
+    'id',
+    'first_name',
+    eb.cast<number>('age', 'integer').as('age')
+  ])
+```
+
+```sql
+select cast("age" as integer) as "age"
+from "person"
+```
+
+================================
+
+## Various Expressions in Update
+
+```typescript
+const result = await db
+  .updateTable('person')
+  .set(({ selectFrom, ref, fn, eb }) => ({
+    first_name: selectFrom('person').select('first_name').limit(1),
+    middle_name: ref('first_name'),
+    age: eb('age', '+', 1),
+    last_name: sql`${'Ani'} || ${'ston'}`,
+  }))
+  .where('id', '=', 1)
+  .executeTakeFirst()
+
+console.log(result.numUpdatedRows)
+```
+
+```sql
+update "person" set
+"first_name" = (select "first_name" from "person" limit $1),
+"middle_name" = "first_name",
+"age" = "age" + $2,
+"last_name" = $3 || $4
+where "id" = $5
+```
+
+================================
+
+## JSON update
+
+```typescript
+db.updateTable('person')
+  .set('experience', (eb) => eb.fn('json_set', [
+    'experience',
+    eb.jsonPath<'experience'>().at('last').key('title'),
+    eb.val('CEO')
+  ]))
+  .where('id', '=', id)
+  .execute()
+```
+
+```sql
+update `person`
+set `experience` = json_set(`experience`, '$[last].title', ?)
+where `id` = ?
+```
+
+================================
+
+## parens
+
+Wraps the expression in parentheses
+
+```typescript
+db.selectFrom('person')
+  .selectAll('person')
+  .where((eb) => eb.parens(
+    eb('age', '=', 1).or('age', '=', 2)
+  ).and(
+    eb('first_name', '=', 'Jennifer').or('first_name', '=', 'Arnold')
+  ))
+  .execute()
+```
+
+```sql
+select "person".*
+from "person"
+where ("age" = $1 or "age" = $2) and ("first_name" = $3 or "first_name" = $4)
+```
+
+================================
+
+## $if
+
+This method is especially handy with optional selects. Any returning or returningAll method calls add columns as optional fields to the output type when called inside the func callback. This is because we can't know if those selections were actually made before running the code.
+
+You can also call any other methods inside the callback.
+
+```typescript
+function updatePerson(id: number, updates: UpdateablePerson, returnLastName: boolean) {
+  return db
+    .updateTable('person')
+    .set(updates)
+    .where('id', '=', id)
+    .returning(['id', 'first_name'])
+    .$if(returnLastName, (qb) => qb.returning('last_name'))
+    .executeTakeFirstOrThrow()
+}
+```
+
+================================
+
+## INSERT ON CONFLICT
+
+```typescript
+const person = { first_name: 'John', last_name: 'Doe', age: 20 }
+db.insertInto('person')
+  .values(person)
+  .onConflict((oc) => oc
+    .column('id')
+    .doUpdateSet(({ ref }) => ({
+      first_name: ref('excluded.first_name'),
+      last_name: ref('excluded.last_name')
+    }))
+  )
+  .execute()
+```
+
+```sql
+INSERT INTO "person" ("first_name", "last_name", "age")
+VALUES ($1, $2, $3) ON CONFLICT ("id") DO
+UPDATE
+SET
+  "first_name" = "excluded"."first_name",
+  "last_name" = "excluded"."last_name"
+```
+
+================================
+
+## refTuple
+
+```typescript
+db.selectFrom('person')
+  .selectAll('person')
+  .where(({ eb, refTuple, selectFrom }) => eb(
+    refTuple('first_name', 'last_name'),
+    'in',
+    selectFrom('pet')
+      .select(['name', 'species'])
+      .where('species', '!=', 'cat')
+      .$asTuple('name', 'species')
+  ))
+```
+
+```sql
+select
+  "person".*
+from
+  "person"
+where
+  ("first_name", "last_name")
+  in
+  (
+    select "name", "species"
+    from "pet"
+    where "species" != $1
+  )
+```
+
+================================
+
+## whereRef, as
+
+```typescript
+const result = await db.selectFrom('pet')
+  .select((eb) => [
+    'pet.name',
+    eb.selectFrom('person')
+      .whereRef('person.id', '=', 'pet.owner_id')
+      .select('person.first_name')
+      .as('owner_name')
+  ])
+  .execute()
+
+console.log(result[0].owner_name)
+```
+
+```sql
+select
+  "pet"."name",
+  ( select "person"."first_name"
+    from "person"
+    where "person"."id" = "pet"."owner_id"
+  ) as "owner_name"
+from "pet"
+```
+
+================================
+
+## $asTuple
+
+Changes the output type from an object to a tuple.
+
+This doesn't affect the generated SQL in any way. This function is just a necessary evil when you need to convert a query's output record type to a tuple type. Typescript doesn't currently offer tools to do this automatically (without insane hackery).
+
+The returned object can no longer be executed. It can only be used as a subquery.
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .where(({ eb, refTuple, selectFrom }) => eb(
+    refTuple('first_name', 'last_name'),
+    'in',
+    selectFrom('pet')
+      .select(['name', 'species'])
+      .where('pet.species', '!=', 'cat')
+      .$asTuple('name', 'species')
+  ))
+```
+
+```sql
+select
+  "person".*
+from
+  "person"
+where
+  ("first_name", "last_name")
+  in
+  (
+    select "name", "species"
+    from "pet"
+    where "pet"."species" != $1
+  )
+```
+
+================================
+
+## Simple Join 
+
+Note: leftJoin, rightJoin, and fullJoin have the same API
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  // `select` needs to come after the call to `innerJoin` so
+  // that you can select from the joined table.
+  .select(['person.id', 'pet.name as pet_name'])
+  .execute()
+```
+
+```sql
+select "person"."id", "pet"."name" as "pet_name"
+from "person"
+inner join "pet"
+on "pet"."owner_id" = "person"."id"
+```
+
+================================
+
+## Aliased Join
+
+```typescript
+await db.selectFrom('person')
+  .innerJoin('pet as p', 'p.owner_id', 'person.id')
+  .where('p.name', '=', 'Doggo')
+  .selectAll()
+  .execute()
+```
+
+================================
+
+## More Complex Join
+
+```typescript
+await db.selectFrom('person')
+  .innerJoin(
+    'pet',
+    (join) => join
+      .onRef('pet.owner_id', '=', 'person.id')
+      .on('pet.name', '=', 'Doggo')
+      .on((eb) => eb.or([eb("person.age", ">", 18), eb("person.age", "<", 100)]))
+  )
+  .selectAll()
+  .execute()
+```
+
+```sql
+select *
+from "person"
+inner join "pet"
+on "pet"."owner_id" = "person"."id"
+and "pet"."name" = $1
+```
+
+================================
+
+## Subquery Join
+
+```typescript
+await db.selectFrom('person')
+  .innerJoin(
+    (eb) => eb
+      .selectFrom('pet')
+      .select(['owner_id as owner', 'name'])
+      .where('name', '=', 'Doggo')
+      .as('doggos'),
+    (join) => join
+      .onRef('doggos.owner', '=', 'person.id'),
+  )
+  .selectAll('doggos')
+  .execute()
+```
+
+```sql
+select "doggos".*
+from "person"
+inner join (
+  select "owner_id" as "owner", "name"
+  from "pet"
+  where "name" = $1
+) as "doggos"
+on "doggos"."owner" = "person"."id"
+```
+
+================================
+
+## Built-in fn
+
+```typescript
+db.selectFrom('person')
+  .selectAll('person')
+  .where(db.fn('upper', ['first_name']), '=', 'JENNIFER')
+
+// If you prefer readability over type-safety
+db.selectFrom('person')
+  .selectAll('person')
+  .where(sql`upper(first_name)`, '=', 'JENNIFER')
+```
+
+================================
+
+## Complex built-in fn
+
+```typescript
+import { sql } from 'kysely'
+
+const result = await db.selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .select(({ fn, val, ref }) => [
+    'person.id',
+
+    // `fn` contains the most common functions
+    fn.count<number>('pet.id').as('pet_count'),
+
+    // You can call any function by calling `fn`
+    // directly. The arguments are treated as column
+    // references by default. If you want  to pass in
+    // values, use the `val` function
+    fn<string>('concat', [
+      val('Ms. '),
+      'first_name',
+      val(' '),
+      'last_name'
+    ]).as('full_name_with_title'),
+
+    // aggregate
+    fn.agg<string[]>('array_agg', ['pet.name']).as('pet_names'),
+
+    // You can use `sql`. The template tag substitutions
+    // are treated as values by default. If you want
+    // to reference columns, use the `ref` function
+    sql<string>`concat(
+      ${ref('first_name')},
+      ' ',
+      ${ref('last_name')}
+    )`.as('full_name')
+  ])
+  .groupBy('person.id')
+  .having((eb) => eb.fn.count('pet.id'), '>', 10)
+  .execute()
+```
+
+```sql
+select
+  "person"."id",
+  count("pet"."id") as "pet_count",
+  concat($1, "first_name", $2, "last_name") as "full_name_with_title",
+  array_agg("pet"."name") as "pet_names",
+  concat("first_name", ' ', "last_name") as "full_name"
+from "person"
+inner join "pet" on "pet"."owner_id" = "person"."id"
+group by "person"."id"
+having count("pet"."id") > $3
+```
+
+================================
+
+## transaction
+
+```typescript
+const catto = await db.transaction().execute(async (trx) => {
+  const jennifer = await trx.insertInto('person')
+    .values({
+      first_name: 'Jennifer',
+      last_name: 'Aniston',
+      age: 40,
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow()
+
+  return await trx.insertInto('pet')
+    .values({
+      owner_id: jennifer.id,
+      name: 'Catto',
+      species: 'cat',
+      is_favorite: false,
+    })
+    .returningAll()
+    .executeTakeFirst()
+})
+```
+
+```typescript
+await db
+  .transaction()
+  .setIsolationLevel('serializable')
+  .execute(async (trx) => {
+    // ...
+  })
+```
+
+================================
+
+## with (Common Table Expression)
+
+```typescript
+await db
+  .with('jennifers', (db) => db
+    .selectFrom('person')
+    .where('first_name', '=', 'Jennifer')
+    .select(['id', 'age'])
+  )
+  .with('adult_jennifers', (db) => db
+    .selectFrom('jennifers')
+    .where('age', '>', 18)
+    .select(['id', 'age'])
+  )
+  .selectFrom('adult_jennifers')
+  .where('age', '<', 60)
+  .selectAll()
+  .execute()
+```
+
+```sql
+WITH
+  "jennifers" AS (
+    SELECT "id", "age"
+    FROM "person"
+    WHERE "first_name" = $1
+  ),
+  "adult_jennifers" AS (
+    SELECT "id", "age"
+    FROM "jennifers"
+    WHERE "age" > $2
+  )
+SELECT *
+FROM "adult_jennifers"
+WHERE "age" < $3
+```
+
+The CTE name can optionally specify column names in addition to a name. In that case Kysely requires the expression to retun rows with the same columns.
+
+```typescript
+await db
+  .with('jennifers(id, age)', (db) => db
+    .selectFrom('person')
+    .where('first_name', '=', 'Jennifer')
+    // This is ok since we return columns with the same
+    // names as specified by `jennifers(id, age)`.
+    .select(['id', 'age'])
+  )
+  .selectFrom('jennifers')
+  .selectAll()
+  .execute()
+```
+
+The first argument can also be a callback. The callback is passed a CTEBuilder instance that can be used to configure the CTE:
+
+```typescript
+await db
+  .with(
+    (cte) => cte('jennifers').materialized(),
+    (db) => db
+      .selectFrom('person')
+      .where('first_name', '=', 'Jennifer')
+      .select(['id', 'age'])
+  )
+  .selectFrom('jennifers')
+  .selectAll()
+  .execute()
+```
+
+================================
+
+## Raw SQL
+
+```typescript
+import { sql } from 'kysely'
+
+const id = 123
+const snippet = sql<Person[]>`select * from person where id = ${id}`
+```
+
+Substitutions (the things inside ${}) are automatically passed to the database as parameters and are never interpolated to the SQL string. There's no need to worry about SQL injection vulnerabilities. Substitutions can be values, other sql expressions, queries and almost anything else Kysely can produce and they get handled correctly. See the examples below.
+
+If you need your substitutions to be interpreted as identifiers, value literals or lists of things, see the ref, table, id, lit, raw and join functions.
+
+You can pass sql snippets returned by the sql tag pretty much anywhere. Whenever something can't be done using the Kysely API, you should be able to drop down to raw SQL using the sql tag. Here's an example query that uses raw sql in a bunch of methods:
+
+```typescript
+const persons = await db
+  .selectFrom('person')
+  .select(
+    // If you use `sql` in a select statement, remember to call the `as`
+    // method to give it an alias.
+    sql<string>`concat(first_name, ' ', last_name)`.as('full_name')
+  )
+  .where(sql`birthdate between ${date1} and ${date2}`)
+  // Here we assume we have list of nicknames for the person
+  // (a list of strings) and we use the PostgreSQL `@>` operator
+  // to test if all of them are valid nicknames for the user.
+  .where('nicknames', '@>', sql`ARRAY[${sql.join(nicknames)}]`)
+  .orderBy(sql`concat(first_name, ' ', last_name)`)
+  .execute()
+```
+
+```sql
+select concat(first_name, ' ', last_name) as "full_name"
+from "person"
+where birthdate between $1 and $2
+and "nicknames" @> ARRAY[$3, $4, $5, $6, $7, $8, $9, $10]
+order by concat(first_name, ' ', last_name)
+```
+
+```typescript
+db.selectFrom('person')
+  .select([
+    'first_name',
+    'last_name',
+    (eb) => {
+      // The `eb.ref` method is type-safe and only accepts
+      // column references that are possible.
+      const firstName = eb.ref('first_name')
+      const lastName = eb.ref('last_name')
+
+      const fullName = sql<string>`concat(${firstName}, ' ', ${lastName})`
+      return fullName.as('full_name')
+    }
+  ])
+```
+
+================================
+
+## JSON Data Type (json_agg, to_json)
+
+```typescript
+import { jsonArrayFrom, jsonObjectFrom } from 'kysely/helpers/postgres'
+
+const persons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .select((eb) => [
+    jsonArrayFrom(
+      eb.selectFrom('pet')
+        .select(['pet.id', 'pet.name'])
+        .whereRef('pet.owner_id', '=', 'person.id')
+        .orderBy('pet.name')
+    ).as('pets'),
+    jsonObjectFrom(
+      eb.selectFrom('person as mother')
+        .select(['mother.id', 'mother.first_name'])
+        .whereRef('mother.id', '=', 'person.mother_id')
+    ).as('mother')
+  ])
+  .execute()
+
+console.log(persons[0].pets[0].name)
+console.log(persons[0].mother?.first_name)
+```
+
+```sql
+SELECT
+  "person".*,
+  (SELECT coalesce(json_agg(agg), '[]') FROM (
+    SELECT "pet"."id", "pet"."name"
+    FROM "pet"
+    WHERE "pet"."owner_id" = "person"."id"
+    ORDER BY "pet"."name"
+  ) AS agg) AS "pets",
+  (SELECT to_json(obj) FROM (
+    SELECT "mother"."id", "mother"."first_name"
+    FROM "person" AS "mother"
+    WHERE "mother"."id" = "person"."mother_id"
+  ) AS obj) AS "mother"
+FROM "person"
+
+```
+
+Making reusable functions:
+
+```typescript
+function pets(ownerId: Expression<string>) {
+  return jsonArrayFrom(
+    db.selectFrom('pet')
+      .select(['pet.id', 'pet.name'])
+      .where('pet.owner_id', '=', ownerId)
+      .orderBy('pet.name')
+  )
+}
+
+function mother(motherId: Expression<string>) {
+  return jsonObjectFrom(
+    db.selectFrom('person as mother')
+      .select(['mother.id', 'mother.first_name'])
+      .where('mother.id', '=', motherId)
+  )
+}
+
+const persons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .select(({ ref }) => [
+    pets(ref('person.id')).as('pets'),
+    mother(ref('person.mother_id')).as('mother')
+  ])
+  .execute()
+```
+
+In some cases Kysely marks your selections as nullable if it's not able to know the related object always exists. If you have that information, you can mark the relation non-null using the `$notNull()` helper like this:
+
+```typescript
+const persons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .select(({ ref }) => [
+    pets(ref('person.id')).as('pets'),
+    mother(ref('person.mother_id')).$notNull().as('mother')
+  ])
+  .execute()
+
+console.log(persons[0].pets[0].name)
+console.log(persons[0].mother.first_name)
+```
+
+If you need to select relations conditionally, `$if` is your friend:
+
+```typescript
+const persons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .$if(includePets, (qb) => qb.select(
+    (eb) => pets(eb.ref('person.id')).as('pets')
+  ))
+  .$if(includeMom, (qb) => qb.select(
+    (eb) => mother(eb.ref('person.mother_id')).as('mother')
+  ))
+  .execute()
+```
+
+================================
+
+<appendix>
+
+# Expressions
+
+An `Expression<T>` is the basic type-safe query building block in Kysely. Pretty much all methods accept expressions as inputs. Most internal classes like `SelectQueryBuilder` and `RawBuilder` (the return value of the `sql` tag) are expressions themselves.
+
+`Expression<T>` represents an arbitrary SQL expression, like a binary expression (e.g. `a + b`), or a function call (e.g. `concat(arg1, ' ', arg2, ...)`). It can be any combination of those, no matter how complex. `T` is the output type of the expression.
+
+## Expression builder
+
+Expressions are usually built using an instance of `ExpressionBuilder<DB, TB>`. `DB` is the same database type you give to `Kysely` when you create an instance. `TB` is the union of all table names that are visible in the context. For example `ExpressionBuilder<DB, 'person' | 'pet'>` means you can access `person` and `pet` tables and all their columns in the expression.
+
+```typescript
+const person = await db
+  .selectFrom('person')
+  .select((eb) => [
+    // Call the `upper` function on `first_name`. There's a bunch of
+    // shortcuts to functions under the `fn` object such as
+    // `eb.fn.coalesce()` that provide a cleaner syntax.
+    eb.fn('upper', ['first_name']).as('upper_first_name'),
+
+    eb.selectFrom('pet')
+      .select('name')
+      .whereRef('pet.owner_id', '=', 'person.id')
+      .limit(1)
+      .as('pet_name'),
+
+    eb('first_name', '=', 'Jennifer').as('is_jennifer')
+  ])
+  // You can destructure the expression builder
+  .where(({ and, or, eb, not, exists, selectFrom }) => or([
+    and([
+      eb('first_name', '=', firstName),
+      eb('last_name', '=', lastName)
+    ]),
+    not(exists(
+      selectFrom('pet')
+        .select('pet.id')
+        .whereRef('pet.owner_id', '=', 'person.id')
+        .where('pet.species', 'in', ['dog', 'cat'])
+    ))
+  ]))
+  .executeTakeFirstOrThrow()
+
+console.log(person.upper_first_name)
+console.log(person.pet_name)
+console.log(person.is_jennifer)
+```
+
+The generated SQL:
+
+```sql
+select
+  upper("first_name") as "upper_first_name",
+
+  (
+    select "name"
+    from "pet"
+    where "pet"."owner_id" = "person"."id"
+    limit 1
+  ) as "pet_name",
+
+  "first_name" = $1 as "is_jennifer"
+from
+  "person"
+where (
+  (
+    "first_name" = $2
+    and "last_name" = $3
+  )
+  or not exists (
+    select "pet.id"
+    from "pet"
+    where "pet"."owner_id" = "person"."id"
+    and "pet"."species" in ($4, $5)
+  )
+)
+```
+
+You can use it the same way in other methods like `having`, `on`, `orderBy`, `groupBy` etc.
+
+All expressions are composable. You can pass expressions as arguments of any expression. All query builder methods in Kysely accept expressions and expression builder callbacks. All expression builder methods offer auto-completions and type-safety just like methods on the query builders.
+
+There's also a global function `expressionBuilder` you can use to create expression builders:
+
+```typescript
+import { expressionBuilder } from 'kysely'
+
+// `eb1` has type `ExpressionBuilder<DB, 'person'>`
+const eb1 = expressionBuilder<DB, 'person'>()
+
+// In this one you'd have access to tables `person` and `pet` and all their columns.
+const eb2 = expressionBuilder<DB, 'person' | 'pet'>()
+
+let qb = query
+  .selectFrom('person')
+  .innerJoin('movie as m', 'm.director_id', 'person.id')
+
+// You can also provide a query builder instance and the context is inferred automatically.
+// Type of `eb` is `ExpressionBuilder<DB & { m: Movie }, 'person' | 'm'>`
+const eb = expressionBuilder(qb)
+
+qb = qb.where(eb.not(eb.exists(
+  eb.selectFrom('pet')
+    .select('pet.id')
+    .whereRef('pet.name', '=', 'm.name')
+)))
+```
+
+## Creating reusable helpers
+
+The expression builder can be used to create reusable helper functions.
+Let's say we have a complex `where` expression we want to reuse in multiple queries:
+
+```typescript
+function hasDogNamed(name: string): Expression<boolean> {
+  const eb = expressionBuilder<DB, 'person'>()
+
+  return eb.exists(
+    eb.selectFrom('pet')
+      .select('pet.id')
+      .whereRef('pet.owner_id', '=', 'person.id')
+      .where('pet.species', '=', 'dog')
+      .where('pet.name', '=', name)
+  )
+}
+```
+
+This helper can now be used in any query, and would work just fine if "person" table is in context:
+
+```typescript
+const doggoPersons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .where(hasDogNamed('Doggo'))
+  .execute()
+```
+
+The above helper is not very type-safe. The following code would compile, but fail at runtime:
+
+```typescript
+const bigFatFailure = await db
+  .selectFrom('movie') // <-- "person" table is not in context!
+  .selectAll('movie')
+  .where(hasDogNamed('Doggo')) // <-- but we're referring to "person.id" in our helper
+  .execute()
+```
+
+It's better to not make assumptions about the calling context and pass in all dependencies
+as arguments. In the following example we pass in the person's id as an expression. We also changed the type of `name` from `string` to `Expression<string>`, which allows us to pass in arbitrary expressions instead of just values.
+
+```typescript
+function hasDogNamed(name: Expression<string>, ownerId: Expression<number>) {
+  // Create an expression builder without any tables in the context.
+  // This way we make no assumptions about the calling context.
+  const eb = expressionBuilder<DB, never>()
+
+  return eb.exists(
+    eb.selectFrom('pet')
+      .select('pet.id')
+      .where('pet.owner_id', '=', ownerId)
+      .where('pet.species', '=', 'dog')
+      .where('pet.name', '=', name)
+  )
+}
+```
+
+Here's how you'd use our brand new helper:
+
+```typescript
+const doggoPersons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .where((eb) => hasDogNamed(eb.val('Doggo'), eb.ref('person.id')))
+  .execute()
+```
+
+## Conditional expressions
+
+In the following, we'll only cover `where` expressions. The same logic applies to `having`, `on`, `orderBy`, `groupBy` etc.
+
+Having a set of optional filters you want to combine using `and`, is the most basic and common use case of conditional `where` expressions.
+Since the `where`, `having` and other filter functions are additive, most of the time this is enough:
+
+```typescript
+let query = db
+  .selectFrom('person')
+  .selectAll('person')
+
+if (firstName) {
+  // The query builder is immutable. Remember to replace the builder
+  // with the new one.
+  query = query.where('first_name', '=', firstName)
+}
+
+if (lastName) {
+  query = query.where('last_name', '=', lastName)
+}
+
+const persons = await query.execute()
+```
+
+The same query can be built using the expression builder like this:
+
+```typescript
+const persons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .where((eb) => {
+    const filters: Expression<SqlBool>[] = []
+
+    if (firstName) {
+      filters.push(eb('first_name', '=', firstName))
+    }
+
+    if (lastName) {
+      filters.push(eb('last_name', '=', lastName))
+    }
+
+    return eb.and(filters)
+  })
+  .execute()
+```
+
+Using the latter design, you can build conditional expressions of any complexity.
+</appendix>
