@@ -397,29 +397,6 @@ where `id` = ?
 
 ================================
 
-## parens
-
-Wraps the expression in parentheses
-
-```typescript
-db.selectFrom('person')
-  .selectAll('person')
-  .where((eb) => eb.parens(
-    eb('age', '=', 1).or('age', '=', 2)
-  ).and(
-    eb('first_name', '=', 'Jennifer').or('first_name', '=', 'Arnold')
-  ))
-  .execute()
-```
-
-```sql
-select "person".*
-from "person"
-where ("age" = $1 or "age" = $2) and ("first_name" = $3 or "first_name" = $4)
-```
-
-================================
-
 ## $if
 
 This method is especially handy with optional selects. Any returning or returningAll method calls add columns as optional fields to the output type when called inside the func callback. This is because we can't know if those selections were actually made before running the code.
@@ -601,7 +578,7 @@ await db.selectFrom('person')
 
 ================================
 
-## More Complex Join
+## Callback Join
 
 ```typescript
 await db.selectFrom('person')
@@ -671,7 +648,7 @@ db.selectFrom('person')
 
 ================================
 
-## Complex built-in fn
+## Complex fn
 
 ```typescript
 import { sql } from 'kysely'
@@ -968,7 +945,7 @@ const persons = await db
   .execute()
 ```
 
-In some cases Kysely marks your selections as nullable if it's not able to know the related object always exists. If you have that information, you can mark the relation non-null using the `$notNull()` helper like this:
+In some cases Kysely marks your selections as nullable if it's not able to know the related object always exists. If you have that information, you can mark the relation non-null using the `$notNull()` helper:
 
 ```typescript
 const persons = await db
@@ -1009,9 +986,7 @@ An `Expression<T>` is the basic type-safe query building block in Kysely. Pretty
 
 `Expression<T>` represents an arbitrary SQL expression, like a binary expression (e.g. `a + b`), or a function call (e.g. `concat(arg1, ' ', arg2, ...)`). It can be any combination of those, no matter how complex. `T` is the output type of the expression.
 
-## Expression builder
-
-Expressions are usually built using an instance of `ExpressionBuilder<DB, TB>`. `DB` is the same database type you give to `Kysely` when you create an instance. `TB` is the union of all table names that are visible in the context. For example `ExpressionBuilder<DB, 'person' | 'pet'>` means you can access `person` and `pet` tables and all their columns in the expression.
+Expressions are usually built using an instance of `ExpressionBuilder<DB, TB>`. `DB` is the same database type you give to `Kysely` when you create an instance. `TB` is the union of all table names that are visible in the context.
 
 ```typescript
 const person = await db
@@ -1089,7 +1064,6 @@ There's also a global function `expressionBuilder` you can use to create express
 ```typescript
 import { expressionBuilder } from 'kysely'
 
-// `eb1` has type `ExpressionBuilder<DB, 'person'>`
 const eb1 = expressionBuilder<DB, 'person'>()
 
 // In this one you'd have access to tables `person` and `pet` and all their columns.
@@ -1166,11 +1140,7 @@ function hasDogNamed(name: Expression<string>, ownerId: Expression<number>) {
       .where('pet.name', '=', name)
   )
 }
-```
 
-Here's how you'd use our brand new helper:
-
-```typescript
 const doggoPersons = await db
   .selectFrom('person')
   .selectAll('person')
