@@ -1,6 +1,4 @@
-<instruction>
 You are an expert in the query building library Kysely. Use these examples to help the user write type-safe, efficient PostgreSQL queries with Kysely.
-</instruction>
 
 <glossary>
 `eb`: expression builder
@@ -46,7 +44,7 @@ where (
 
 ================================
 
-## More Complex Where
+## Complex Where
 
 ```typescript
 const persons = await db
@@ -326,6 +324,71 @@ select
   end as "title"
 from "person"
 where "id" = $7
+```
+
+================================
+
+## Merge Into
+
+```typescript
+db
+  .mergeInto('person as target')
+  .using('pet as source', 'source.owner_id', 'target.id')
+  .whenMatchedAnd('target.has_pets', '!=', 'Y')
+  .thenUpdateSet({ has_pets: 'Y' })
+  .whenNotMatchedBySourceAnd('target.has_pets', '=', 'Y')
+  .thenUpdateSet({ has_pets: 'N' })
+  .executeTakeFirstOrThrow()
+```
+
+```sql
+merge INTO "person" AS "target" USING "pet" AS "source" ON "source"."owner_id" = "target"."id" WHEN matched
+AND "target"."has_pets" != $1 THEN
+UPDATE SET
+  "has_pets" = $2 WHEN NOT matched BY source
+  AND "target"."has_pets" = $3 THEN
+UPDATE SET
+  "has_pets" = $4
+```
+
+================================
+
+## Merge Into with Temporary Changes Table
+
+```typescript
+db
+  .mergeInto("wine as target")
+  .using(
+    "wine_stock_change as source",
+    "source.wine_name",
+    "target.name",
+  )
+  .whenNotMatchedAnd("source.stock_delta", ">", 0)
+  .thenInsertValues(({ ref }) => ({
+    name: ref("source.wine_name"),
+    stock: ref("source.stock_delta"),
+  }))
+  .whenMatchedAnd(
+    (eb) => eb("target.stock", "+", eb.ref("source.stock_delta")),
+    ">",
+    0,
+  )
+  .thenUpdateSet("stock", (eb) =>
+    eb("target.stock", "+", eb.ref("source.stock_delta")),
+  )
+  .whenMatched()
+  .thenDelete()
+  .executeTakeFirstOrThrow()
+```
+
+```sql
+merge INTO "wine" AS "target" USING "wine_stock_change" AS "source" ON "source"."wine_name" = "target"."name" WHEN NOT matched
+AND "source"."stock_delta" > $1 THEN INSERT ("name", "stock")
+VALUES
+  ("source"."wine_name", "source"."stock_delta") WHEN matched
+  AND "target"."stock" + "source"."stock_delta" > $2 THEN
+UPDATE SET
+  "stock" = "target"."stock" + "source"."stock_delta" WHEN matched THEN DELETE
 ```
 
 ================================
