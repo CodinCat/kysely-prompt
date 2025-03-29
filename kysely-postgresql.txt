@@ -145,7 +145,7 @@ where (
 ## filterWhereRef
 
 ```typescript
-const result = await db
+db
   .selectFrom('person')
   .select((eb) => [
     eb.fn
@@ -576,7 +576,7 @@ This doesn't affect the generated SQL in any way. This function is just a necess
 The returned object can no longer be executed. It can only be used as a subquery.
 
 ```typescript
-const result = await db
+db
   .selectFrom('person')
   .selectAll('person')
   .where(({ eb, refTuple, selectFrom }) => eb(
@@ -611,7 +611,7 @@ where
 Note: leftJoin, rightJoin, and fullJoin have the same API
 
 ```typescript
-const result = await db
+db
   .selectFrom('person')
   .innerJoin('pet', 'pet.owner_id', 'person.id')
   // `select` needs to come after the call to `innerJoin` so
@@ -716,7 +716,7 @@ db.selectFrom('person')
 ```typescript
 import { sql } from 'kysely'
 
-const result = await db.selectFrom('person')
+db.selectFrom('person')
   .innerJoin('pet', 'pet.owner_id', 'person.id')
   .select(({ fn, val, ref }) => [
     'person.id',
