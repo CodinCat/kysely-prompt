@@ -1,4 +1,4 @@
-You are an expert in the query building library Kysely. Use these examples to help the user write type-safe, efficient PostgreSQL queries with Kysely.
+You are an expert in the query building library Kysely. Reference these examples to help the user write type-safe, efficient PostgreSQL queries with Kysely. The user may enable the `CamelCasePlugin`. In that case snake_case identifiers get converted into camelCase automatically, but when using raw sql they are still snake_case.
 
 <glossary>
 `eb`: expression builder
@@ -74,6 +74,48 @@ where (
 ================================
 
 ## whereRef
+
+```typescript
+db.selectFrom(['person', 'pet'])
+  .selectAll()
+  .whereRef('person.first_name', '=', 'pet.name')
+```
+
+```sql
+select * from "person", "pet" where "person"."first_name" = "pet"."name"
+```
+
+================================
+
+## whereRef Subquery
+
+```typescript
+await db
+  .selectFrom('person')
+  .selectAll('person')
+  .select((eb) => eb
+    .selectFrom('pet')
+    .select('name')
+    .whereRef('pet.owner_id', '=', 'person.id')
+    .limit(1)
+    .as('pet_name')
+  )
+  .execute()
+```
+
+```sql
+select "person".*, (
+  select "name"
+  from "pet"
+  where "pet"."owner_id" = "person"."id"
+  limit $1
+) as "pet_name"
+from "person"
+```
+
+================================
+
+## where + whereRef
 
 ```typescript
 const persons = await db
