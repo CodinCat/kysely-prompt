@@ -525,6 +525,31 @@ function updatePerson(id: number, updates: UpdateablePerson, returnLastName: boo
 ## INSERT ON CONFLICT
 
 ```typescript
+db
+  .insertInto('pet')
+  .values({
+    name: 'Catto',
+    species: 'cat',
+  })
+  .onConflict((oc) => oc
+    .column('name')
+    .doUpdateSet({ species: 'hamster' })
+  )
+  .execute()
+```
+
+```sql
+insert into "pet" ("name", "species")
+values ($1, $2)
+on conflict ("name")
+do update set "species" = $3
+```
+
+================================
+
+## INSERT ON CONFLICT with virtual excluded table
+
+```typescript
 const person = { first_name: 'John', last_name: 'Doe', age: 20 }
 db.insertInto('person')
   .values(person)
