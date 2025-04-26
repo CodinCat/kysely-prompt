@@ -1106,6 +1106,86 @@ const persons = await db
   .execute()
 ```
 
+jsonBuildObject:
+
+```typescript
+import { sql } from 'kysely'
+import { jsonBuildObject } from 'kysely/helpers/postgres'
+
+const result = await db
+  .selectFrom('person')
+  .select((eb) => [
+    'id',
+    jsonBuildObject({
+      first: eb.ref('first_name'),
+      last: eb.ref('last_name'),
+      full: sql<string>`first_name || ' ' || last_name`
+    }).as('name')
+  ])
+  .execute()
+result[0]?.id
+result[0]?.name.first
+result[0]?.name.full
+```
+
+```sql
+select "id", json_build_object(
+  'first', first_name,
+  'last', last_name,
+  'full', first_name || ' ' || last_name
+) as "name"
+from "person"
+```
+
+coalesce + jsonAgg + jsonBuildObject:
+
+```typescript
+import { sql } from 'kysely'
+import { jsonBuildObject } from 'kysely/helpers/postgres'
+
+await db
+  .selectFrom('acquisition')
+  .leftJoin('transaction', 'transaction.acquisitionId', 'acquisition.id')
+  .select(({ fn, ref }) => [
+    'acquisition.id',
+    fn.coalesce(
+      fn.jsonAgg(
+        jsonBuildObject({
+          id: ref('transaction.id'),
+          status: ref('transaction.status'),
+        })
+      ).filterWhere('transaction.id', 'is not', null),
+      sql`'[]'`
+    ).as('transactions'),
+  ])
+  .groupBy('acquisition.id')
+  .executeTakeFirstOrThrow()
+```
+
+```sql
+SELECT
+  "acquisition"."id",
+  coalesce(
+    json_agg(
+      json_build_object(
+        'id',
+        "transaction"."id",
+        'status',
+        "transaction"."status"
+      )
+    ) FILTER (
+      WHERE
+        "transaction"."id" IS NOT NULL
+    ),
+    '[]'
+  ) AS "transactions"
+FROM
+  "acquisition"
+  LEFT JOIN "transaction" ON "transaction"."acquisitionId" = "acquisition"."id"
+GROUP BY
+  "acquisition"."id"
+```
+
 ================================
 
 <appendix>
