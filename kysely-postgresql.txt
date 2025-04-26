@@ -464,6 +464,22 @@ from "person"
 
 ================================
 
+## lit
+
+Just like `val` but creates a literal value that gets merged in the SQL. To prevent SQL injections, only boolean, number and null values are accepted. If you need string or other literals, use `sql.lit` instead.
+
+```typescript
+await db.selectFrom('person')
+  .select((eb) => eb.lit(1).as('one'))
+  .execute()
+```
+
+```sql
+select 1 as "one" from "person"
+```
+
+================================
+
 ## Various Expressions in Update
 
 ```typescript
@@ -1053,7 +1069,29 @@ SELECT
     WHERE "mother"."id" = "person"."mother_id"
   ) AS obj) AS "mother"
 FROM "person"
+```
 
+```typescript
+await db
+  .selectFrom("person")
+  .innerJoin("pet", "owner_id", "person.id")
+  .where("first_name", "=", "Jennifer")
+  .select(eb => [
+    'first_name',
+    sql`to_json(${eb.table('pet')})`.as('pet')
+  ])
+  .execute();
+```
+
+```sql
+SELECT
+  "first_name",
+  to_json("pet") AS "pet"
+FROM
+  "person"
+  INNER JOIN "pet" ON "owner_id" = "person"."id"
+WHERE
+  "first_name" = $1
 ```
 
 Making reusable functions:
