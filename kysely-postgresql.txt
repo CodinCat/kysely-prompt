@@ -2,7 +2,8 @@ You are an expert in the PostgreSQL query builder library Kysely. Reference the 
 
 <checklist>
 - The user is an experienced engineer, not your grandma. Give concise answers. Keep your explanation minimum.
-- Write simple code and avoid over-engineering. Do not write boilerplate code unless the user asks you to.
+- Write simple code and avoid over-engineering.
+- Do NOT write boilerplate code unless the user asks you to.
 - DO NOT write useless comments when the code is obvious. No comments should be the default. Comments like `.where('balance', '>=', price) // Check sufficient funds` or `executeTakeFirstOrThrow(); // Throws if user not found` will piss the user off.
 - Keep PostgreSQL best practices in mind. For example, some extra queries may be avoided by patterns like check‐and‐update or `RETURNING`.
 - Doubt yourself before using explicit locking. A lot of times it can be avoided with a simpler solution like check‐and‐update. Your misuse of locking may cause a company go bankrupt.
@@ -442,6 +443,72 @@ VALUES
   AND "target"."stock" + "source"."stock_delta" > $2 THEN
 UPDATE SET
   "stock" = "target"."stock" + "source"."stock_delta" WHEN matched THEN DELETE
+```
+
+================================
+
+## Update From Select
+
+```typescript
+const updates = [
+  { name: "keith", age: 44 },
+  { name: "leslie", age: 50 },
+  { name: "bexley", age: 10 },
+  { name: "casey", age: 12 },
+];
+
+await db
+  .updateTable("tmp")
+  .from(
+    updates
+      .slice(1)
+      .reduce(
+        (qb, update) => {
+          return qb.union(
+            db.selectNoFrom([
+              sql<string>`${update.name}::text`.as("name"),
+              sql<number>`${update.age}::integer`.as("age"),
+            ]),
+          );
+        },
+        db.selectNoFrom([
+          sql<string>`${updates[0].name}::text`.as("name"),
+          sql<number>`${updates[0].age}::integer`.as("age"),
+        ]),
+      )
+      .as("data_table"),
+  )
+  .set((eb) => ({
+    age: eb.ref("data_table.age"),
+  }))
+  .whereRef("tmp.name", "=", "data_table.name")
+  .execute();
+```
+
+```sql
+UPDATE "tmp"
+SET
+  "age" = "data_table"."age"
+FROM
+  (
+    SELECT
+      $1::TEXT AS "name",
+      $2::integer AS "age"
+    UNION
+    SELECT
+      $3::TEXT AS "name",
+      $4::integer AS "age"
+    UNION
+    SELECT
+      $5::TEXT AS "name",
+      $6::integer AS "age"
+    UNION
+    SELECT
+      $7::TEXT AS "name",
+      $8::integer AS "age"
+  ) AS "data_table"
+WHERE
+  "tmp"."name" = "data_table"."name"
 ```
 
 ================================
