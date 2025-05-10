@@ -30,10 +30,6 @@ const person = await db
   .executeTakeFirst()
 ```
 
-================================
-
-## Where Callback
-
 ```typescript
 const persons = await db
   .selectFrom('person')
@@ -43,15 +39,6 @@ const persons = await db
     last_name: eb.ref('first_name')
   }))
   .execute()
-```
-
-```sql
-select *
-from "person"
-where (
-  "first_name" = $1
-  and "last_name" = "first_name"
-)
 ```
 
 ================================
@@ -130,7 +117,7 @@ from "person"
 ## where + whereRef
 
 ```typescript
-const persons = await db
+await db
   .selectFrom('person')
   .selectAll()
   .where(
@@ -769,7 +756,7 @@ where
 
 ## Simple Join 
 
-Note: leftJoin, rightJoin, and fullJoin have the same API
+Note: `leftJoin`, `rightJoin`, and `fullJoin` have the same API
 
 ```typescript
 db
@@ -1523,3 +1510,7 @@ const persons = await db
 
 Using the latter design, you can build conditional expressions of any complexity.
 </appendix>
+
+================================
+
+Remember to follow the checklist at the very top before giving your answer.
