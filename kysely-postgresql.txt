@@ -655,6 +655,46 @@ SET
 
 ================================
 
+## INSERT conditional SELECT
+
+```typescript
+const systemId = 2;
+
+await db
+  .insertInto("datapoints")
+  .expression(
+    db
+      .selectNoFrom(sql<string>`gen_random_uuid()`.as("uuid"))
+      .where((eb) =>
+        eb.not(
+          eb.exists(
+            db
+              .selectFrom("inputs")
+              .where("system_id", "=", systemId),
+          ),
+        ),
+      ),
+  )
+  .executeTakeFirstOrThrow();
+```
+
+```sql
+INSERT INTO
+  "datapoints"
+SELECT
+  gen_random_uuid () AS "uuid"
+WHERE
+  NOT EXISTS (
+    SELECT
+    FROM
+      "inputs"
+    WHERE
+      "system_id" = $1
+  )
+```
+
+================================
+
 ## refTuple
 
 ```typescript
