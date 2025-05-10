@@ -1349,6 +1349,53 @@ GROUP BY
 
 ================================
 
+## CASE WHEN helper with NOT NULL $narrowType
+
+```typescript
+import type { NotNull, SelectQueryBuilder } from "kysely";
+
+function foo(baseQuery: SelectQueryBuilder<Database, "person", {}>) {
+  const queryWithNotNull = baseQuery
+    .where("metadata", "is not", null)
+    .$narrowType<{ metadata: NotNull }>();
+
+  return queryWithNotNull.select((eb) =>
+    eb.fn
+      .sum(
+        eb
+          .case()
+          .when(
+            eb.ref("metadata", "->>").key("type"),
+            "=",
+            "some-type",
+          )
+          .then(10)
+          .else(0)
+          .end(),
+      )
+      .as("some-name"),
+  );
+}
+
+foo(db.selectFrom("person")).execute();
+```
+
+```sql
+SELECT
+  sum(
+    CASE
+      WHEN "metadata" ->> 'type' = $1 THEN 10
+      ELSE 0
+    END
+  ) AS "some-name"
+FROM
+  "person"
+WHERE
+  "metadata" IS NOT NULL
+```
+
+================================
+
 <appendix>
 
 # Expressions
